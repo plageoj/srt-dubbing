@@ -18,6 +18,7 @@ Usage:
 Options:
   --voice female        Female voice (default)
   --voice male          Male voice
+  --voice ja-JP-NanamiNeural  Any edge-tts voice ID (edge-tts --list-voices)
   --bgm-volume 80      BGM volume % to keep (default: 100)
   --out output.mp4      Output filename (auto-generated if not set)
   --audio-only          Export audio only, no video muxing
@@ -141,6 +142,14 @@ VOICES = {
     "female": ("vi-VN-HoaiMyNeural", "HoaiMy  | Female | Southern accent"),
     "male":   ("vi-VN-NamMinhNeural", "NamMinh | Male   | Southern accent"),
 }
+
+
+def resolve_voice(voice: str) -> tuple[str, str]:
+    """Alias (female/male) → voice tiếng Việt; ngược lại coi là edge-tts voice ID."""
+    if voice in VOICES:
+        return VOICES[voice]
+    return voice, voice
+
 
 SPEED             = "+0%"
 STRETCH_LIMIT     = 2.0       # max speed-up ratio trước khi cắt
@@ -710,15 +719,15 @@ async def main():
     parser.add_argument("--video", required=False, default=None)
     parser.add_argument("--out", required=False, default=None,
                         help="Output filename (auto-generated from video name if not set)")
-    parser.add_argument("--voice", required=False, default="female",
-                        choices=["female", "male"])
+    parser.add_argument("--voice", default="female",
+                        help="female / male (tiếng Việt) hoặc edge-tts voice ID bất kỳ, vd: ja-JP-NanamiNeural (xem: edge-tts --list-voices)")
     parser.add_argument("--bgm-volume", required=False, default=100, type=int)
     parser.add_argument("--audio-only", action="store_true")
     parser.add_argument("--workers", required=False, default=5, type=int,
                         help="Concurrent TTS requests (default: 5, max recommended: 10)")
     args = parser.parse_args()
 
-    voice_id, voice_label = VOICES[args.voice]
+    voice_id, voice_label = resolve_voice(args.voice)
     workers = max(1, min(args.workers, MAX_WORKERS_CAP))
 
     base_name = args.video if args.video else args.srt

@@ -123,7 +123,7 @@ python viet_dubbing.py --srt subtitle.srt --video no_voice.mp4
 |---|---|---|---|
 | `--srt` | ✅ Yes | — | Path to Vietnamese `.srt` subtitle file |
 | `--video` | ❌ No | (none) | Path to video file (with voice already removed) |
-| `--voice` | ❌ No | `female` | Voice to use: `female` or `male` |
+| `--voice` | ❌ No | `female` | `female`, `male`, or any edge-tts voice ID (e.g. `ja-JP-NanamiNeural`) |
 | `--bgm-volume` | ❌ No | `100` | Original audio volume to keep (0–100%) |
 | `--out` | ❌ No | auto | Custom output filename (auto-generated if not set) |
 | `--audio-only` | ❌ No | false | Export `.mp3` only, skip video muxing |
@@ -135,6 +135,8 @@ python viet_dubbing.py --srt subtitle.srt --video no_voice.mp4
 |---|---|---|---|
 | `--voice female` | HoaiMyNeural | Female | Southern Vietnamese *(default)* |
 | `--voice male` | NamMinhNeural | Male | Southern Vietnamese |
+
+Any other [edge-tts](https://github.com/rany2/edge-tts) voice can be passed directly, e.g. `--voice ja-JP-NanamiNeural` or `--voice en-US-AriaNeural`. Run `edge-tts --list-voices` to see all available voices.
 
 ---
 
@@ -237,7 +239,7 @@ python viet_dubbing.py --srt subtitle.srt --video episode01_no_voice.mp4
 | `--video` | ❌ No | (none) | File video gốc (suy ra tên thư mục TTS) |
 | `--tmp-dir` | ❌ No | auto | Thư mục TTS cache (default: `tts_<tên video/srt>`) |
 | `--log` | ❌ No | latest | File log cụ thể (default: log mới nhất trong `logs/`) |
-| `--voice` | ❌ No | `female` | Giọng đọc: `female` hoặc `male` |
+| `--voice` | ❌ No | `female` | Giọng đọc: `female`, `male` hoặc edge-tts voice ID bất kỳ |
 | `--workers` | ❌ No | `3` | Concurrent requests (thấp hơn main script để tránh rate limit) |
 | `--retries` | ❌ No | `5` | Số lần retry mỗi cue (1–20) |
 

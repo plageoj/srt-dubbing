@@ -77,6 +77,14 @@ VOICES = {
     "male":   ("vi-VN-NamMinhNeural", "NamMinh | Male   | Southern accent"),
 }
 
+
+def resolve_voice(voice: str) -> tuple[str, str]:
+    """Alias (female/male) → voice tiếng Việt; ngược lại coi là edge-tts voice ID."""
+    if voice in VOICES:
+        return VOICES[voice]
+    return voice, voice
+
+
 SPEED            = "+0%"
 SLOW_RATE        = "+25%"  # phải khớp với viet_dubbing.py
 MAX_WORKERS_CAP  = 15
@@ -335,7 +343,8 @@ async def main():
                         help="Thư mục TTS cache (default: tts_<tên video/srt>)")
     parser.add_argument("--log", default=None,
                         help="File log cụ thể (default: log mới nhất trong logs/)")
-    parser.add_argument("--voice", default="female", choices=["female", "male"])
+    parser.add_argument("--voice", default="female",
+                        help="female / male (tiếng Việt) hoặc edge-tts voice ID bất kỳ, vd: ja-JP-NanamiNeural (xem: edge-tts --list-voices)")
     parser.add_argument("--workers", default=3, type=int,
                         help="Concurrent TTS requests (default: 3, thấp để tránh rate limit)")
     parser.add_argument("--retries", default=5, type=int,
@@ -349,7 +358,7 @@ async def main():
         base_name = args.video if args.video else args.srt
         tmp_dir = f"tts_{Path(base_name).stem}"
 
-    voice_id, voice_label = VOICES[args.voice]
+    voice_id, voice_label = resolve_voice(args.voice)
     workers = max(1, min(args.workers, MAX_WORKERS_CAP))
     retries = max(MIN_RETRIES, min(args.retries, MAX_RETRIES_CAP))
 
