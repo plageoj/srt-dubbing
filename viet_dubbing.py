@@ -50,6 +50,11 @@ from pathlib import Path
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+# Console Windows (cp932/cp1252...) không encode được tiếng Việt / "—" → ép UTF-8
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8")
+
 # ── Check dependencies ──────────────────────────────────────
 _missing = []
 try:
