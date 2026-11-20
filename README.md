@@ -87,9 +87,20 @@ ffmpeg -version
 
 ### 3. Install Python packages
 
+Dependencies are declared in `pyproject.toml`. With [uv](https://docs.astral.sh/uv/) (recommended):
+
 ```bash
-pip install edge-tts pydub rich numpy -i https://pypi.org/simple
+uv sync
+uv run python viet_dubbing.py --srt subtitle.srt --video no_voice.mp4
 ```
+
+Or with pip:
+
+```bash
+pip install . -i https://pypi.org/simple
+```
+
+> ℹ️ On Python 3.13+, `audioop-lts` is installed automatically (pydub needs it).
 
 > 💡 Always use `-i https://pypi.org/simple` to avoid connection issues with default mirrors in Vietnam.
 
@@ -295,6 +306,8 @@ viet_dubbing.py pipeline:
 viet-dubbing/
 ├── viet_dubbing.py           # Main dubbing script (v3)
 ├── retry_failed_tts.py       # Retry companion script (v5)
+├── pyproject.toml            # Dependencies
+├── uv.lock
 ├── README.md
 ├── LICENSE
 ├── logs/                     # Auto-generated log files
@@ -314,7 +327,7 @@ viet-dubbing/
 
 - [ ] Install Python (tick Add to PATH)
 - [ ] Install FFmpeg (add `/bin` to PATH)
-- [ ] `pip install edge-tts pydub rich numpy -i https://pypi.org/simple`
+- [ ] `uv sync` (or `pip install . -i https://pypi.org/simple`)
 
 **Every video:**
 

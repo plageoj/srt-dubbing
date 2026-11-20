@@ -1,0 +1,27 @@
+[project]
+name = "srt-dubbing"
+version = "3.1.0"
+description = "Auto dubbing from SRT subtitle files using Edge TTS"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+dependencies = [
+    "edge-tts>=7.0",
+    "pydub>=0.25",
+    "numpy",
+    "rich",
+    # pydub dùng audioop, đã bị xoá khỏi stdlib từ Python 3.13
+    "audioop-lts; python_version >= '3.13'",
+]
+
+[tool.uv]
+# Chỉ là script chạy trực tiếp, không build thành package
+package = false
+
+# Cho phép `pip install .` (không dùng uv)
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+py-modules = ["viet_dubbing", "retry_failed_tts"]
