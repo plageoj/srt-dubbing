@@ -158,7 +158,6 @@ def resolve_voice(voice: str) -> tuple[str, str]:
 
 SPEED             = "+0%"
 STRETCH_LIMIT     = 2.0       # max speed-up ratio trước khi cắt
-COMPRESS_MIN      = 0.6       # ratio dưới ngưỡng này → không stretch
 RETRY_COUNT       = 3
 RETRY_DELAY_SEC   = 1.5
 SAMPLE_RATE       = 24000     # edge-tts output
@@ -498,8 +497,9 @@ def build_tts_track(cues: list[dict], tts_paths: list[str], total_ms: int,
         if slot_ms <= 0:
             continue
 
+        # Chỉ tăng tốc clip dài hơn slot; clip ngắn hơn giữ nguyên tốc độ (không làm chậm)
         ratio = clip_ms / slot_ms
-        if ratio > COMPRESS_MIN:
+        if ratio > 1 + STRETCH_TOLERANCE:
             if ratio <= STRETCH_LIMIT:
                 target_ms = int(slot_ms)
             else:
