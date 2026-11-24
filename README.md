@@ -10,7 +10,7 @@ Automatically generate Vietnamese voice-over from `.srt` subtitle files and sync
 
 - 🆓 **100% Free** — uses Microsoft Edge TTS (no API key required)
 - 🎙️ **Natural Vietnamese voices** — female & male options
-- ⏱️ **Auto time-sync** — automatically speeds up audio clips that are longer than the subtitle timestamp (shorter clips keep their natural speed)
+- ⏱️ **Auto time-sync** — automatically speeds up audio clips that are longer than the subtitle timestamp (shorter clips keep their natural speed). The ~0.9s of trailing silence that Edge TTS appends to every clip is trimmed before measuring
 - 🎵 **Preserves original audio** — BGM and sound effects are kept, only voice is replaced
 - ⚡ **High performance** — single-decode pipeline, numpy mixing, parallel stretch
 - 📊 **Beautiful CLI progress** — real-time progress bar with rich

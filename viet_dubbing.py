@@ -164,6 +164,9 @@ SAMPLE_RATE       = 24000     # edge-tts output
 CHANNELS          = 1         # mono
 SAMPLE_WIDTH      = 2         # 16-bit
 STRETCH_TOLERANCE = 0.05      # ±5% → skip stretch
+# edge-tts chèn ~0.9s im lặng ở cuối mỗi clip → cắt bỏ trước khi tính độ dài
+TRAIL_SILENCE_DB  = -50       # dưới ngưỡng này coi là im lặng
+TRAIL_KEEP_MS     = 50        # giữ lại một chút đuôi để không cắt mất âm cuối
 MAX_WORKERS_CAP   = 15
 
 # Auto fix cue slow: regen TTS với tốc độ nhanh hơn
@@ -202,6 +205,36 @@ def ffprobe_duration_ms(file_path: str) -> float | None:
         return float(result.stdout.strip()) * 1000
     except Exception:
         return None
+
+
+def speech_duration_ms(file_path: str) -> float | None:
+    """
+    Độ dài clip (ms) sau khi bỏ khoảng im lặng ở cuối. Giữ nguyên im lặng ở đầu.
+    Dùng ffmpeg silencedetect — vẫn nhanh hơn decode bằng pydub.
+    """
+    try:
+        result = subprocess.run(
+            ["ffmpeg", "-hide_banner", "-nostats", "-i", file_path,
+             "-af", f"silencedetect=n={TRAIL_SILENCE_DB}dB:d=0.1",
+             "-f", "null", "-"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+        )
+    except Exception:
+        return ffprobe_duration_ms(file_path)
+
+    m = re.search(r"Duration: (\d+):(\d+):(\d+(?:\.\d+)?)", result.stderr)
+    if not m:
+        return ffprobe_duration_ms(file_path)
+    total_ms = (int(m[1]) * 3600 + int(m[2]) * 60 + float(m[3])) * 1000
+
+    starts = re.findall(r"silence_start: (-?[\d.]+)", result.stderr)
+    ends = re.findall(r"silence_end: ([\d.]+)", result.stderr)
+    # Im lặng cuối kéo dài tới hết file → cắt từ silence_start cuối cùng
+    if starts and len(ends) == len(starts) and float(ends[-1]) * 1000 >= total_ms - 20:
+        speech_end_ms = max(0.0, float(starts[-1]) * 1000)
+        if speech_end_ms > 0:
+            return min(total_ms, speech_end_ms + TRAIL_KEEP_MS)
+    return total_ms
 
 
 def audio_to_numpy(segment: AudioSegment) -> np.ndarray:
@@ -355,6 +388,7 @@ async def regen_slow_cues_fast(cues: list[dict], tts_paths: list[str], voice: st
     jobs = []          # (cue, path) cần regen
     already_fast = 0
 
+    candidates = []    # (cue, path) chưa regen
     for cue, tts_path in zip(cues, tts_paths):
         if not os.path.exists(tts_path) or os.path.getsize(tts_path) == 0:
             continue
@@ -363,8 +397,12 @@ async def regen_slow_cues_fast(cues: list[dict], tts_paths: list[str], voice: st
         if os.path.exists(marker):
             already_fast += 1
             continue
+        candidates.append((cue, tts_path))
 
-        clip_ms = ffprobe_duration_ms(tts_path)
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        measured = list(executor.map(speech_duration_ms, [p for _, p in candidates]))
+
+    for (cue, tts_path), clip_ms in zip(candidates, measured):
         if clip_ms is None or clip_ms <= 0:
             continue
 
@@ -443,7 +481,7 @@ def _stretch_one_file(src_path: str, clip_ms: float, target_ms: int,
                       cue_index: int) -> str | None:
     """
     Stretch/compress 1 file MP3 bằng FFmpeg.
-    Nhận clip_ms đã biết từ caller — không cần gọi ffprobe lại.
+    Nhận clip_ms (đã bỏ im lặng cuối) từ caller — cắt tới clip_ms rồi mới atempo.
     """
     if clip_ms <= 0 or target_ms <= 0:
         return None
@@ -456,7 +494,7 @@ def _stretch_one_file(src_path: str, clip_ms: float, target_ms: int,
     out_path = src_path.replace(".mp3", f"_s{cue_index}.mp3")
     cmd = [
         "ffmpeg", "-y", "-i", src_path,
-        "-filter:a", atempo_filter,
+        "-filter:a", f"atrim=end={clip_ms / 1000:.3f},{atempo_filter}",
         "-vn", out_path, "-loglevel", "error",
     ]
     result = subprocess.run(cmd, capture_output=True)
@@ -473,22 +511,26 @@ def build_tts_track(cues: list[dict], tts_paths: list[str], total_ms: int,
                     max_stretch_workers: int = 4) -> tuple[AudioSegment, int]:
     """
     Build full TTS track:
-      Phase 1: ffprobe lấy duration → detect cue cần stretch
+      Phase 1: đo độ dài (bỏ im lặng cuối) song song → detect cue cần stretch
       Phase 2: ThreadPool stretch song song
       Phase 3: Decode mỗi MP3 đúng 1 lần → mix vào numpy array
     """
     total_samples = int(total_ms * SAMPLE_RATE / 1000)
     track = np.zeros(total_samples, dtype=np.float32)
 
-    # ── Phase 1: Detect stretch candidates bằng ffprobe ─────
+    # ── Phase 1: Detect stretch candidates (độ dài đã bỏ im lặng cuối) ─
     clip_durations: dict[int, float] = {}
     stretch_jobs = []
 
-    for i, (cue, tts_path) in enumerate(zip(cues, tts_paths)):
-        if not os.path.exists(tts_path) or os.path.getsize(tts_path) == 0:
-            continue
+    def _measure(path: str) -> float | None:
+        if not os.path.exists(path) or os.path.getsize(path) == 0:
+            return None
+        return speech_duration_ms(path)
 
-        clip_ms = ffprobe_duration_ms(tts_path)
+    with ThreadPoolExecutor(max_workers=max_stretch_workers) as executor:
+        measured = list(executor.map(_measure, tts_paths))
+
+    for i, (cue, tts_path, clip_ms) in enumerate(zip(cues, tts_paths, measured)):
         if clip_ms is None or clip_ms <= 0:
             continue
         clip_durations[i] = clip_ms
@@ -549,6 +591,9 @@ def build_tts_track(cues: list[dict], tts_paths: list[str], total_ms: int,
             except Exception:
                 progress.advance(task_id)
                 continue
+
+            if i not in stretched_paths:
+                clip = clip[:int(clip_durations[i])]   # bỏ im lặng cuối
 
             if len(clip) == 0:
                 progress.advance(task_id)
