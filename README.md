@@ -139,6 +139,7 @@ python viet_dubbing.py --srt subtitle.srt --video no_voice.mp4
 | `--out` | ❌ No | auto | Custom output filename (auto-generated if not set) |
 | `--audio-only` | ❌ No | false | Export `.mp3` only, skip video muxing |
 | `--workers` | ❌ No | `5` | Concurrent TTS requests (max recommended: 10) |
+| `--beep` | ❌ No | false | Play a beep when processing finishes |
 
 ### Available Voices
 

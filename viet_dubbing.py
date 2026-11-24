@@ -23,6 +23,7 @@ Options:
   --out output.mp4      Output filename (auto-generated if not set)
   --audio-only          Export audio only, no video muxing
   --workers 5           Concurrent TTS requests (default: 5)
+  --beep                Beep when finished
 
 Changelog v3:
   - Single-decode pipeline: mỗi MP3 chỉ decode 1 lần duy nhất
@@ -773,6 +774,8 @@ async def main():
                         help="female / male (tiếng Việt) hoặc edge-tts voice ID bất kỳ, vd: ja-JP-NanamiNeural (xem: edge-tts --list-voices)")
     parser.add_argument("--bgm-volume", required=False, default=100, type=int)
     parser.add_argument("--audio-only", action="store_true")
+    parser.add_argument("--beep", action="store_true",
+                        help="Phát beep khi hoàn thành")
     parser.add_argument("--workers", required=False, default=5, type=int,
                         help="Concurrent TTS requests (default: 5, max recommended: 10)")
     args = parser.parse_args()
@@ -995,7 +998,8 @@ async def main():
     console.print("[dim]  --bgm-volume 0        Mute original audio completely[/]")
     console.print()
 
-    play_done_sound()
+    if args.beep:
+        play_done_sound()
 
 
 if __name__ == "__main__":
