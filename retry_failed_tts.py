@@ -23,6 +23,7 @@ Options:
   --tmp-dir   tts_<video>       Thư mục TTS cache (default: tts_<tên video/srt>)
   --log       logs/log_xxx.txt  File log cụ thể (default: log mới nhất)
   --voice     female/male       Giọng đọc (default: female)
+  --rate      +10%              Tốc độ TTS, phải khớp với viet_dubbing.py (default: +0%)
   --workers   3                 Số request đồng thời (default: 3)
   --retries   5                 Số lần retry mỗi cue (default: 5)
 
@@ -90,8 +91,26 @@ def resolve_voice(voice: str) -> tuple[str, str]:
     return voice, voice
 
 
-SPEED            = "+0%"
-SLOW_RATE        = "+25%"  # phải khớp với viet_dubbing.py
+def parse_rate(value: str) -> int:
+    """'+10%' / '-10%' / '10' / '-10' → phần trăm (int) cho edge-tts."""
+    m = re.fullmatch(r"\s*([+-]?\d+)\s*%?\s*", value)
+    if not m or int(m.group(1)) <= -100:
+        raise argparse.ArgumentTypeError(f"invalid rate: {value!r} (vd: +10%, -10%)")
+    return int(m.group(1))
+
+
+def format_rate(percent: int) -> str:
+    """Phần trăm → chuỗi rate edge-tts, vd: 10 → '+10%'."""
+    return f"{percent:+d}%"
+
+
+def tts_cache_dir(base_name: str, rate: int) -> str:
+    """Thư mục TTS cache — phải khớp với viet_dubbing.py."""
+    stem = f"tts_{Path(base_name).stem}"
+    return stem if rate == 0 else f"{stem}_rate{format_rate(rate)[:-1]}"
+
+
+SLOW_RATE_BOOST  = 25     # phải khớp với viet_dubbing.py
 MAX_WORKERS_CAP  = 15
 MIN_RETRIES      = 1
 MAX_RETRIES_CAP  = 20
@@ -200,7 +219,7 @@ def find_missing_by_scan(cues: list[dict], tmp_dir: str) -> list[dict]:
 # ============================================================
 
 async def tts_one(cue: dict, out_path: str, voice: str,
-                  max_retries: int, rate: str = SPEED) -> bool:
+                  max_retries: int, rate: str) -> bool:
     """Generate TTS cho 1 cue, có retry với linear backoff."""
     for attempt in range(1, max_retries + 1):
         try:
@@ -216,6 +235,7 @@ async def tts_one(cue: dict, out_path: str, voice: str,
 
 
 async def retry_all(failed_cues: list[dict], tmp_dir: str, voice: str,
+                    rate: str, slow_rate: str,
                     max_workers: int, max_retries: int) -> tuple[int, int, int]:
     """
     Retry tất cả cue bị lỗi, skip cue đã có file từ lần trước.
@@ -246,10 +266,10 @@ async def retry_all(failed_cues: list[dict], tmp_dir: str, voice: str,
     if fast_count:
         console.print(
             f"  [yellow]→ {fast_count}/{len(to_run)} cue có marker [bold].fast[/] "
-            f"→ retry với rate={SLOW_RATE}[/]"
+            f"→ retry với rate={slow_rate}[/]"
         )
         console.print(
-            f"  [dim]→ {len(to_run) - fast_count} cue còn lại retry với rate={SPEED}[/]\n"
+            f"  [dim]→ {len(to_run) - fast_count} cue còn lại retry với rate={rate}[/]\n"
         )
 
     success = already_done
@@ -258,9 +278,9 @@ async def retry_all(failed_cues: list[dict], tmp_dir: str, voice: str,
     async def _worker(cue: dict) -> bool:
         path = cue_path(tmp_dir, cue["index"])
         # Chọn rate dựa trên marker — nhất quán với lần regen trước
-        rate = SLOW_RATE if cue_has_fast_marker(tmp_dir, cue["index"]) else SPEED
+        cue_rate = slow_rate if cue_has_fast_marker(tmp_dir, cue["index"]) else rate
         async with semaphore:
-            return await tts_one(cue, path, voice, max_retries, rate=rate)
+            return await tts_one(cue, path, voice, max_retries, rate=cue_rate)
 
     with Progress(
         SpinnerColumn(spinner_name="dots", style="cyan"),
@@ -354,6 +374,8 @@ async def main():
                         help="Concurrent TTS requests (default: 3, thấp để tránh rate limit)")
     parser.add_argument("--retries", default=5, type=int,
                         help="Số lần retry mỗi cue (default: 5)")
+    parser.add_argument("--rate", default="+0%", type=parse_rate,
+                        help="Tốc độ TTS, phải khớp với viet_dubbing.py (default: +0%%)")
     args = parser.parse_args()
 
     # Derive tmp_dir: --tmp-dir > --video > --srt
@@ -361,7 +383,9 @@ async def main():
         tmp_dir = args.tmp_dir
     else:
         base_name = args.video if args.video else args.srt
-        tmp_dir = f"tts_{Path(base_name).stem}"
+        tmp_dir = tts_cache_dir(base_name, args.rate)
+    rate = format_rate(args.rate)
+    slow_rate = format_rate(args.rate + SLOW_RATE_BOOST)
 
     voice_id, voice_label = resolve_voice(args.voice)
     workers = max(1, min(args.workers, MAX_WORKERS_CAP))
@@ -376,6 +400,7 @@ async def main():
     info.add_row("SRT",     args.srt)
     info.add_row("TTS dir", tmp_dir + "/")
     info.add_row("Voice",   voice_label)
+    info.add_row("Rate",    rate)
     info.add_row("Workers", f"{workers} concurrent")
     info.add_row("Retries", f"{retries} lần/cue")
     console.print(info)
@@ -410,7 +435,7 @@ async def main():
     # ── RETRY ────────────────────────────────────────────────
     t_start = _time.perf_counter()
     success, fail, fast_count = await retry_all(
-        failed_cues, tmp_dir, voice_id, workers, retries
+        failed_cues, tmp_dir, voice_id, rate, slow_rate, workers, retries
     )
     t_total = _time.perf_counter() - t_start
 
@@ -424,7 +449,7 @@ async def main():
     result.add_row("Tổng cue retry", str(len(failed_cues)))
     result.add_row("Thành công",     f"[green]{success}[/]")
     if fast_count:
-        result.add_row(f"Retry +25%",  f"[yellow]{fast_count}[/]  (cue có marker .fast)")
+        result.add_row(f"Retry {slow_rate}",  f"[yellow]{fast_count}[/]  (cue có marker .fast)")
     result.add_row("Vẫn lỗi",       f"[red]{fail}[/]" if fail else "[dim]0 ✓[/]")
     result.add_row("Thời gian",      f"{t_total:.1f}s")
     result.add_row("Đã lưu vào",    tmp_dir + "/")
@@ -435,7 +460,7 @@ async def main():
         console.print("[green]✓ Tất cả retry thành công![/]")
         console.print()
         console.print("[cyan]Bước tiếp theo:[/] Chạy lại viet_dubbing.py:")
-        console.print(f"[dim]  python viet_dubbing.py --srt {args.srt} --video <video.mp4>[/]")
+        console.print(f"[dim]  python viet_dubbing.py --srt {args.srt} --video <video.mp4> --rate={rate}[/]")
         console.print(f"[dim]  → {len(all_cues)} cue sẽ được skip ở Pass 1[/]")
         console.print(f"[dim]  → Pass 2 sẽ detect nếu cue retry mới bị slow rồi tự regen +25%[/]")
     else:

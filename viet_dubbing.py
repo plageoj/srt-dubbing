@@ -23,6 +23,7 @@ Options:
   --out output.mp4      Output filename (auto-generated if not set)
   --audio-only          Export audio only, no video muxing
   --workers 5           Concurrent TTS requests (default: 5)
+  --rate +10%           TTS speed (default: +0%; số âm viết --rate=-10% hoặc --rate -10)
   --beep                Beep when finished
 
 Changelog v3:
@@ -157,7 +158,25 @@ def resolve_voice(voice: str) -> tuple[str, str]:
     return voice, voice
 
 
-SPEED             = "+0%"
+def parse_rate(value: str) -> int:
+    """'+10%' / '-10%' / '10' / '-10' → phần trăm (int) cho edge-tts."""
+    m = re.fullmatch(r"\s*([+-]?\d+)\s*%?\s*", value)
+    if not m or int(m.group(1)) <= -100:
+        raise argparse.ArgumentTypeError(f"invalid rate: {value!r} (vd: +10%, -10%)")
+    return int(m.group(1))
+
+
+def format_rate(percent: int) -> str:
+    """Phần trăm → chuỗi rate edge-tts, vd: 10 → '+10%'."""
+    return f"{percent:+d}%"
+
+
+def tts_cache_dir(base_name: str, rate: int) -> str:
+    """Thư mục TTS cache — tách riêng theo rate để không dùng lẫn clip khác tốc độ."""
+    stem = f"tts_{Path(base_name).stem}"
+    return stem if rate == 0 else f"{stem}_rate{format_rate(rate)[:-1]}"
+
+
 STRETCH_LIMIT     = 2.0       # max speed-up ratio trước khi cắt
 RETRY_COUNT       = 3
 RETRY_DELAY_SEC   = 1.5
@@ -172,7 +191,7 @@ MAX_WORKERS_CAP   = 15
 
 # Auto fix cue slow: regen TTS với tốc độ nhanh hơn
 SLOW_RATIO_THRESHOLD = 2.0    # ratio (clip/slot) > 2.0 → cue "slow", cần đọc nhanh hơn
-SLOW_RATE            = "+25%" # rate truyền cho edge-tts khi regen cue slow
+SLOW_RATE_BOOST      = 25     # cue slow được regen với rate = --rate + 25%
 
 
 # ============================================================
@@ -301,7 +320,7 @@ def parse_srt(srt_path: str) -> list[dict]:
 # TTS GENERATION — CONCURRENT
 # ============================================================
 
-async def tts_one(cue: dict, out_path: str, voice: str, rate: str = SPEED) -> bool:
+async def tts_one(cue: dict, out_path: str, voice: str, rate: str) -> bool:
     """Generate TTS cho 1 cue, có retry với exponential backoff."""
     for attempt in range(1, RETRY_COUNT + 1):
         try:
@@ -320,7 +339,7 @@ async def tts_one(cue: dict, out_path: str, voice: str, rate: str = SPEED) -> bo
     return False
 
 
-async def generate_all_tts(cues: list[dict], out_dir: str, voice: str,
+async def generate_all_tts(cues: list[dict], out_dir: str, voice: str, rate: str,
                            max_workers: int = 5) -> tuple[list[str], int, int, int]:
     """Generate TTS đồng thời, skip file đã có trong cache."""
     os.makedirs(out_dir, exist_ok=True)
@@ -346,7 +365,7 @@ async def generate_all_tts(cues: list[dict], out_dir: str, voice: str,
 
     async def _worker(cue: dict, path: str) -> bool:
         async with semaphore:
-            return await tts_one(cue, path, voice)
+            return await tts_one(cue, path, voice, rate)
 
     with Progress(
         SpinnerColumn(spinner_name="dots", style="cyan"),
@@ -376,10 +395,10 @@ async def generate_all_tts(cues: list[dict], out_dir: str, voice: str,
 
 
 async def regen_slow_cues_fast(cues: list[dict], tts_paths: list[str], voice: str,
-                                max_workers: int = 5) -> tuple[int, int]:
+                                slow_rate: str, max_workers: int = 5) -> tuple[int, int]:
     """
     Pass 2: phát hiện cue có TTS dài hơn slot quá nhiều (ratio > SLOW_RATIO_THRESHOLD)
-    rồi regen với SLOW_RATE để rút ngắn audio.
+    rồi regen với slow_rate để rút ngắn audio.
 
     Dùng marker file `.fast` để đánh dấu cue đã regen — chạy lại sẽ skip.
 
@@ -421,7 +440,7 @@ async def regen_slow_cues_fast(cues: list[dict], tts_paths: list[str], voice: st
 
     async def _worker(cue: dict, path: str) -> bool:
         async with semaphore:
-            ok = await tts_one(cue, path, voice, rate=SLOW_RATE)
+            ok = await tts_one(cue, path, voice, slow_rate)
             if ok:
                 try:
                     Path(path + ".fast").touch()
@@ -430,13 +449,13 @@ async def regen_slow_cues_fast(cues: list[dict], tts_paths: list[str], voice: st
             return ok
 
     if logger:
-        logger.info(f"Regenerating {len(jobs)} slow cue(s) with rate={SLOW_RATE} "
+        logger.info(f"Regenerating {len(jobs)} slow cue(s) with rate={slow_rate} "
                     f"(already fast: {already_fast})")
 
     regenerated = 0
     with Progress(
         SpinnerColumn(spinner_name="dots", style="yellow"),
-        TextColumn(f"[bold yellow]Regen slow cues ({SLOW_RATE})[/]"),
+        TextColumn(f"[bold yellow]Regen slow cues ({slow_rate})[/]"),
         BarColumn(bar_width=32, style="yellow", complete_style="bright_green"),
         MofNCompleteColumn(),
         TaskProgressColumn(),
@@ -778,6 +797,8 @@ async def main():
                         help="Phát beep khi hoàn thành")
     parser.add_argument("--workers", required=False, default=5, type=int,
                         help="Concurrent TTS requests (default: 5, max recommended: 10)")
+    parser.add_argument("--rate", default="+0%", type=parse_rate,
+                        help="Tốc độ TTS toàn bộ, vd: +10%%, --rate=-10%% (default: +0%%)")
     args = parser.parse_args()
 
     voice_id, voice_label = resolve_voice(args.voice)
@@ -786,7 +807,9 @@ async def main():
     base_name = args.video if args.video else args.srt
     video_out = args.out if args.out else make_output_name(base_name)
     audio_out = make_output_name(base_name, suffix="audio")
-    tmp_dir = f"tts_{Path(base_name).stem}"
+    tmp_dir = tts_cache_dir(base_name, args.rate)
+    rate = format_rate(args.rate)
+    slow_rate = format_rate(args.rate + SLOW_RATE_BOOST)
 
     # ── INIT LOGGER ─────────────────────────────────────────
     global logger
@@ -795,6 +818,7 @@ async def main():
     logger.info(f"SRT file    : {args.srt}")
     logger.info(f"Video file  : {args.video or '(none)'}")
     logger.info(f"Voice       : {voice_label}")
+    logger.info(f"Rate        : {rate} (slow cue regen: {slow_rate})")
     logger.info(f"BGM volume  : {args.bgm_volume}%")
     logger.info(f"Workers     : {workers} concurrent")
     logger.info(f"Audio only  : {args.audio_only}")
@@ -813,6 +837,7 @@ async def main():
     info.add_row("SRT",        args.srt)
     info.add_row("Video",      args.video or "(none)")
     info.add_row("Voice",      voice_label)
+    info.add_row("Rate",       rate)
     info.add_row("BGM volume", f"{args.bgm_volume}%")
     info.add_row("Workers",    f"{workers} concurrent")
     info.add_row("TTS dir",    tmp_dir + "/")
@@ -850,9 +875,9 @@ async def main():
 
     # ── GENERATE TTS (concurrent) ───────────────────────────
     logger.section("GENERATE TTS")
-    logger.info(f"Starting TTS generation — {len(cues)} cues, {workers} workers, voice={voice_id}")
+    logger.info(f"Starting TTS generation — {len(cues)} cues, {workers} workers, voice={voice_id}, rate={rate}")
     tts_paths, success, fail, skipped = await generate_all_tts(
-        cues, tmp_dir, voice_id, max_workers=workers
+        cues, tmp_dir, voice_id, rate, max_workers=workers
     )
 
     t_tts = _time.perf_counter()
@@ -869,18 +894,18 @@ async def main():
     console.print(summary)
     console.print()
 
-    # ── REGEN SLOW CUES (Pass 2 — fix cue ratio > 2.0 với +25%) ────
+    # ── REGEN SLOW CUES (Pass 2 — fix cue ratio > 2.0 với rate +25%) ────
     logger.section("REGEN SLOW CUES")
-    logger.info(f"Pass 2: detect cue ratio > {SLOW_RATIO_THRESHOLD} → regen với rate={SLOW_RATE}")
+    logger.info(f"Pass 2: detect cue ratio > {SLOW_RATIO_THRESHOLD} → regen với rate={slow_rate}")
     regenerated, already_fast = await regen_slow_cues_fast(
-        cues, tts_paths, voice_id, max_workers=workers
+        cues, tts_paths, voice_id, slow_rate, max_workers=workers
     )
     t_regen = _time.perf_counter()
     if regenerated > 0 or already_fast > 0:
         regen_summary = Table(box=box.SIMPLE, show_header=False, padding=(0, 2))
         regen_summary.add_column(style="dim", width=20)
         regen_summary.add_column()
-        regen_summary.add_row("Regenerated",  f"[yellow]{regenerated}[/]  (rate={SLOW_RATE})")
+        regen_summary.add_row("Regenerated",  f"[yellow]{regenerated}[/]  (rate={slow_rate})")
         regen_summary.add_row("Already fast", f"[cyan]{already_fast}[/]  (skipped)")
         regen_summary.add_row("Regen time",   f"[dim]{format_duration(t_regen - t_tts)}[/]")
         console.print(regen_summary)

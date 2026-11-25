@@ -139,6 +139,7 @@ python viet_dubbing.py --srt subtitle.srt --video no_voice.mp4
 | `--out` | ❌ No | auto | Custom output filename (auto-generated if not set) |
 | `--audio-only` | ❌ No | false | Export `.mp3` only, skip video muxing |
 | `--workers` | ❌ No | `5` | Concurrent TTS requests (max recommended: 10) |
+| `--rate` | ❌ No | `+0%` | Overall TTS speed, e.g. `+10%` or `--rate=-10%`. Slow-cue regen uses this rate + 25% |
 | `--beep` | ❌ No | false | Play a beep when processing finishes |
 
 ### Available Voices
@@ -183,6 +184,14 @@ python viet_dubbing.py --srt subtitle.srt --video episode01_no_voice.mp4 --bgm-v
 ```bash
 python viet_dubbing.py --srt subtitle.srt --audio-only
 ```
+
+**Speed up all TTS voices by 15%:**
+
+```bash
+python viet_dubbing.py --srt subtitle.srt --video episode01_no_voice.mp4 --rate +15%
+```
+
+> Negative values must be written as `--rate=-10%` (or `--rate -10` without `%`), otherwise argparse treats them as an option. A non-zero rate uses its own TTS cache folder (e.g. `tts_episode01_rate+15/`), so clips generated at different speeds never get mixed.
 
 **Increase TTS concurrency (faster but higher rate limit risk):**
 
@@ -254,10 +263,11 @@ python viet_dubbing.py --srt subtitle.srt --video episode01_no_voice.mp4
 | `--voice` | ❌ No | `female` | Giọng đọc: `female`, `male` hoặc edge-tts voice ID bất kỳ |
 | `--workers` | ❌ No | `3` | Concurrent requests (thấp hơn main script để tránh rate limit) |
 | `--retries` | ❌ No | `5` | Số lần retry mỗi cue (1–20) |
+| `--rate` | ❌ No | `+0%` | Tốc độ TTS — phải giống `--rate` đã dùng với `viet_dubbing.py` |
 
 ### `.fast` marker
 
-Khi Pass 2 của `viet_dubbing.py` regen một cue với `rate=+25%`, nó tạo file marker `cue_XXXX.mp3.fast` trong thư mục TTS cache. `retry_failed_tts.py` đọc marker này để biết cue nào cần retry với `+25%` thay vì `+0%`, giữ tính nhất quán giữa các lần chạy.
+Khi Pass 2 của `viet_dubbing.py` regen một cue với `rate=+25%`, nó tạo file marker `cue_XXXX.mp3.fast` trong thư mục TTS cache. `retry_failed_tts.py` đọc marker này để biết cue nào cần retry với `--rate + 25%` thay vì `--rate`, giữ tính nhất quán giữa các lần chạy.
 
 ### How it finds failed cues
 
@@ -313,7 +323,7 @@ viet-dubbing/
 ├── LICENSE
 ├── logs/                     # Auto-generated log files
 │   └── log_20250419.txt
-└── tts_<video>/              # TTS cache (per video)
+└── tts_<video>/              # TTS cache (per video; tts_<video>_rate+N/ when --rate is set)
     ├── cue_0001.mp3
     ├── cue_0001.mp3.fast     # Marker: cue đã regen với rate=+25%
     ├── cue_0002.mp3
